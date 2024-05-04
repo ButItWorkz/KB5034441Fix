@@ -1,0 +1,262 @@
+import subprocess
+import time
+
+winReLocation = ''
+winReDisk = ''
+#Placeholder
+winRePart = ''
+#Placeholder
+winReCheck = ''
+#Placeholder
+mbrBoot = 'false'
+#Fails if not updated
+gptBoot = 'false'
+#Fails if not updated
+safetyCheck = 0
+#Fails if not updated
+diskCheck = 'false'
+#Fails if not updated
+partCheck = 'false'
+
+#testVersion is the version of diskpart used during testing
+testVersion = 100226211
+#This is the current version tested
+
+#versionCheck variable for version validation
+versionCheck = 1
+#Set to always fail until it passes test else it remains '1' (fail is if its not '0'). Serves as a safeguard
+
+#The following are diskpart commands as variables
+diskpartExit = 'exit'
+shrinkDrive = 'shrink desired=5000 minimum=250'
+gptCreatePartition = 'create partition primary size=2000 id=de94bba4-06d1-4d40-a16a-bfd50179d6ac'
+gptAssignAttribute = 'gpt attributes =0x8000000000000001'
+mbrCreatePartition = 'create partition primary size=2000 id=27'
+formatWinRePartition = 'format quick fs=ntfs label="Windows RE tools"'
+# CAUTION!
+# Dont be stupid!
+deletePartitionOverride = 'delete partition override'
+# Dont be stupid!
+# CAUTION!
+
+#The following attempts to ensure reagentc is enabled
+p = subprocess.Popen(['reagentc', '/enable'], stdout=subprocess.PIPE, stdin=subprocess.PIPE, text=True)
+winReEnable = str(p.communicate())
+#Debugging Statement:print(winReEnable)
+
+#The following grabs locations information, this is in the format of \\?\GLOBALROOT\device\harddisk0\partition4\Recovery\WindowsRE
+p = subprocess.Popen(['reagentc', '/info'], stdout=subprocess.PIPE, stdin=subprocess.PIPE, text=True)
+#The following stores stdout as a variable, performs some formatting and updates the variable
+getWinRe = str(p.communicate())
+getWinRe = str(getWinRe).replace("('Windows Recovery Environment (Windows RE) and system reset configuration\\nInformation:\\n\\n", '')
+getWinRe = str(getWinRe).replace('\\n', '\n')
+getWinRe = str(getWinRe).replace('     ', '\n')
+#The following parses variable: 'getWinRe' for the disk & partition numbers and stores them as variables: 'winReDisk' & 'winRePart'
+lines = 0
+for data in getWinRe.splitlines():
+    data = data.strip()
+    lines = lines + 1
+    if lines == 4:
+        winReLocation = str(data).strip()
+getWinRe = str(getWinRe).replace('\\', '^')
+getWinRe = str(getWinRe).replace('^^^^?^^GLOBALROOT^^device^^', '')
+getWinRe = str(getWinRe).replace('^^', '\n')
+lines = 0
+for data in getWinRe.splitlines():
+    data = data.strip()
+    lines = lines + 1
+    if lines == 4:
+        data = data.replace('harddisk', '')
+        winReDisk = data
+    if lines == 5:
+        data = data.replace('partition', '')
+        winRePart = data
+    #The following stores partition type as variable: 'winReCheck' to verify it's a recovery style partition.
+    if lines == 6:
+        winReCheck = data
+#Debugging Statement:print(winReDisk)
+#Debugging Statement:print(winRePart)
+#Debugging Statement:print(winReCheck)
+
+#The following initiates diskpart and passes 'exit' to it to grab version information and store it as an int variable 'version'
+p = subprocess.Popen(['diskpart'], stdout=subprocess.PIPE, stdin=subprocess.PIPE, text=True)
+p.stdin.write('exit')
+#The following stores stdout as a variable, performs some formatting and updates the variable
+versionText = str(p.communicate())
+versionText = str(versionText).replace('\\n\\n', '\n')
+versionText = str(versionText).replace('\\n', '\n')
+versionText = str(versionText).replace("Microsoft DiskPart version ", '')
+versionText = str(versionText).replace("('", '')
+##The following formats the version number enabling it to be an int()
+versionText = str(versionText).replace(".", '')
+#The folowing parses lines in versionText and returns only the version number
+lines = 0
+for line in versionText.splitlines():
+    lines = lines + 1
+    if lines == 2:
+        version = line
+#Debugging Statement:print('Current diskpart version is: {}'.format(version))
+
+#The following initiates powershell passes 'Get-Disk -Number' and sends the drive number from variable: 'winReDisk'
+p = subprocess.Popen(['powershell', 'Get-Disk -Number {}'.format(winReDisk)], stdout=subprocess.PIPE, stdin=subprocess.PIPE, text=True)
+#The following stores stdout as a variable, performs some formatting and updates the variable
+bootType = str(p.communicate())
+bootType = str(bootType).replace('\\n\\n\\n', '')
+bootType = str(bootType).replace('\\n', '\n')
+bootType = str(bootType).replace("', None)", '')
+bootType = str(bootType).replace("('", '')
+bootType = str(bootType).replace('  ', '')
+bootType = str(bootType).replace('-', '')
+bootType = str(bootType).replace(' ', '\n')
+#The following makes bootType GPT or MBR, which is the 2nd to last line, and it counts the lines in variable: bootType
+lines = 0
+for line in bootType.splitlines():
+    lines = lines + 1
+    mbrBoot = line.find('MBR')
+    gptBoot = line.find('GPT')
+#The following sets mbrBoot & gptBoot to the contents of the line IF it contains MBR or GPT respectively
+if mbrBoot != -1:
+    mbrBoot = line
+    #DebuggingStatement:print('MBR is: {}'.format(mbrBoot))
+if gptBoot != -1:
+    gptBoot = line
+    #DebuggingStatement:print('GPT is: {}'.format(gptBoot))
+
+#The following initiates diskpart, selects ative drive using variable: 'winReDisk', lists partitions and stores the primary partition in variable: 'primaryPart'
+p = subprocess.Popen(['diskpart'], stdout=subprocess.PIPE, stdin=subprocess.PIPE, text=True)
+p.stdin.write('sel disk {}\nlist part\nexit'.format(winReDisk))
+primaryPart = str(p.communicate())
+primaryPart = str(primaryPart).replace('\\n\\n\\n', '')
+primaryPart = str(primaryPart).replace('\\n', '\n')
+lines = 0
+for line in primaryPart.splitlines():
+    lines = lines + 1
+    if line.find('Primary') != -1:
+        primaryPartLine = str(line)
+        primaryPartLine = str(primaryPartLine).replace('    Primary', '\nPrimary')
+        pLines = 0
+        for pLine in primaryPartLine.splitlines():
+            pLines = pLines + 1
+            if pLines == 1:
+                primaryPart = str(pLine).strip()
+
+#The following try except blocks & if statements perform error checking
+#The following performs version checking for Diskpart
+try:
+    version = int(version)
+    if version <= testVersion:
+        versionCheck = 0
+        #'0' is a good check, '1' is a bad check
+except:
+    validation = 'failed'
+    safetyCheck = 1
+
+#The following ensures recovery disk variable returns an integer
+try:
+    winReDisk = int(winReDisk)
+except:
+    diskCheck = 'disk is not an int: problem occurred in var winReDisk assignment'
+    safetyCheck = 2
+
+#The following ensures recovery partition variable returns an integer
+try:
+    winRePart = int(winRePart)
+except:
+    partCheck = 'part is not an int: problem occurred in var winRePart assignment'
+    safetyCheck = 3
+
+#The following ensures recovery partition variable evaluates as str: 'Recovery'
+if winReCheck != 'Recovery':
+    winReCheck = 'winReCheck did not evaluate to "Recovery"'
+    safetyCheck = 4
+
+#The following ensures the primary & recovery partitions are not identical
+if primaryPart == winRePart:
+    safetyCheck = 5
+
+#The following 'safetyCheck' ensures program wont run if variables fail validation. A safeguard
+if safetyCheck == 0:
+    #The following disables windows recovery service, necessary to delete and rebuild the recovery partition.
+    p = subprocess.Popen(['reagentc', '/Disable'], stdout=subprocess.PIPE, stdin=subprocess.PIPE, text=True)
+    #DebuggingStatement:print(str(p.communicate()))
+    time.sleep(2)
+
+    #The following makes a copy of the entire Winre.wim directory and stores in root C: under 'KBfixBU', just in case
+    p = subprocess.Popen(['powershell'], stdout=subprocess.PIPE, stdin=subprocess.PIPE, text=True)
+    p.stdin.write('Copy-Item -path C:\\windows\\System32\\Recovery -Destination C:\\KBfixBU -Recurse -Force\nexit'.format())
+    #DebuggingStatement:print(str(p.communicate()))
+    time.sleep(.2)
+
+    #The following makes a copy of the Winre.wim file and stores in root C: under 'KBfixBU', just in case
+    p = subprocess.Popen(['powershell'], stdout=subprocess.PIPE, stdin=subprocess.PIPE, text=True)
+    p.stdin.write('Copy-Item -path C:\\windows\\System32\\Recovery\\Winre.wim -Destination C:\\KBfixBU\\Winre.wim -Recurse -Force\nexit'.format())
+    #DebuggingStatement:print(str(p.communicate()))
+    time.sleep(.2)
+
+    #The following initiates diskpart, selects active disk, selects primary partition and shrinks it by 5Gb (intentionally more than the recovery size to add and leave some unallocated space for our SSDs)
+    p = subprocess.Popen(['diskpart'], stdout=subprocess.PIPE, stdin=subprocess.PIPE, text=True)
+    p.stdin.write('sel disk {}\nsel {}\n{}\nexit'.format(winReDisk, primaryPart, shrinkDrive))
+    #DebuggingStatement:p.stdin.write('sel disk {}\nsel {}\nnexit'.format(winReDisk, primaryPart))
+    #DebuggingStatement:print(str(p.communicate()))
+    time.sleep(1)
+
+    #The following selects active disk, selects recovery partition, then deletes it
+    p = subprocess.Popen(['diskpart'], stdout=subprocess.PIPE, stdin=subprocess.PIPE, text=True)
+    p.stdin.write('sel disk {}\nsel part {}\n{}\nexit'.format(winReDisk, winRePart, deletePartitionOverride))
+    #DebuggingStatement:p.stdin.write('sel disk {}\nsel part {}\nexit'.format(winReDisk, winRePart))
+    #DebuggingStatement:print(str(p.communicate()))
+    time.sleep(5)
+
+    #The following will select the active disk and create a new WinRE partition for the appropriate boot type
+    #it does this by checking if mbrBoot & gptBoot were updated with MBR or GPT respectively
+    #MBR type check
+    if mbrBoot == 'MBR':
+        p = subprocess.Popen(['diskpart'], stdout=subprocess.PIPE, stdin=subprocess.PIPE, text=True)
+        p.stdin.write('sel disk {}\n{}\nexit'.format(winReDisk, mbrCreatePartition))
+        #DebuggingStatement:p.stdin.write('sel disk {}\nexit'.format(winReDisk))
+        #DebuggingStatement:print(str(p.communicate()))
+    #GPT type check
+    if gptBoot == 'GPT':
+        p = subprocess.Popen(['diskpart'], stdout=subprocess.PIPE, stdin=subprocess.PIPE, text=True)
+        p.stdin.write('sel disk {}\n{}\nexit'.format(winReDisk, gptCreatePartition,))
+        #DebuggingStatement:p.stdin.write('sel disk {}\nexit'.format(winReDisk))
+        #DebuggingStatement:print(str(p.communicate()))
+        time.sleep(.5)
+        #If GPT then the recovery partition needs an attribute assigned. So, the following assigns this attribute
+        p = subprocess.Popen(['diskpart'], stdout=subprocess.PIPE, stdin=subprocess.PIPE, text=True)
+        p.stdin.write('sel disk {}\nsel part {}\n{}\nexit'.format(winReDisk, winRePart, gptAssignAttribute))
+
+    time.sleep(5)
+
+    #The following selects active disk, selects recovery partition (which "should" be the same partition number), and formats it
+    p = subprocess.Popen(['diskpart'], stdout=subprocess.PIPE, stdin=subprocess.PIPE, text=True)
+    p.stdin.write('sel disk {}\nsel part {}\n{}\nexit'.format(winReDisk, winRePart, formatWinRePartition))
+    #DebuggingStatement:print(str(p.communicate()))
+
+    time.sleep(1)
+
+    #The follwing reenables the reagentc service disabled previously
+    p = subprocess.Popen(['reagentc', '/enable'], stdout=subprocess.PIPE, stdin=subprocess.PIPE, text=True)
+    #DebuggingStatement:print(str(p.communicate()))
+
+    time.sleep(1)
+
+    #The following ensures WinRE index gets updated, else it sometimes stores pathing data as primary partition
+    #The follwing disables reagentc
+    p = subprocess.Popen(['reagentc', '/disable'], stdout=subprocess.PIPE, stdin=subprocess.PIPE, text=True)
+    #DebuggingStatement:print(str(p.communicate()))
+    time.sleep(1)
+    #The follwing reenables reagentc
+    p = subprocess.Popen(['reagentc', '/enable'], stdout=subprocess.PIPE, stdin=subprocess.PIPE, text=True)
+    #DebuggingStatement:print(str(p.communicate()))
+else:
+    print('safetyCheck returned: {}'.format(safetyCheck))
+    print('validation check returned: {}'.format(versionCheck))
+    print('diskCheck returned: {}'.format(diskCheck))
+    print('partCheck returned: {}'.format(partCheck))
+    print('winReCheck returned: {}'.format(winReCheck))
+    print('diskpart version is: {}'.format(version))
+    print('Recovery and Primary partitions returned: \nRecover Partition:{}\nPrimary Partition:{}'.format(winRePart, primaryPart))
+    print('The program will now exit')
+    #The following forces windows to return a failure code, there is likely a better way to do this than force a divide by zero error.
+    print(0/0)
